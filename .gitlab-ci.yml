@@ -1,0 +1,68 @@
+stages: [verify]
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+
+default:
+  interruptible: true
+  timeout: 30 minutes
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - release/
+      - test-results/
+
+variables:
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+linux:
+  stage: verify
+  image: node:24.19.0-bookworm
+  tags: [saas-linux-small-amd64]
+  script:
+    - npm ci
+    - npm run check
+    - npm audit --audit-level=high
+    - npm run package:dir
+
+windows:
+  stage: verify
+  tags: [saas-windows-medium-amd64]
+  before_script:
+    - |
+      $ErrorActionPreference = "Stop"
+      Invoke-WebRequest "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip" -OutFile node.zip
+      if ((Get-FileHash node.zip -Algorithm SHA256).Hash.ToLower() -ne "57f71ab3652e797d84acddc79c81cc9ff1c6ddb2a1974cdb83f00fee9bff4c73") { throw "Node checksum mismatch" }
+      Expand-Archive node.zip -DestinationPath .node
+      $env:Path = "$((Resolve-Path .node/node-v24.19.0-win-x64).Path);$env:Path"
+      node --version
+  script:
+    - npm ci
+    - npm run check
+    - npm audit --audit-level=high
+    - npm run package:dir
+
+# GitLab-hosted macOS requires an eligible paid/Open Source plan. Local macOS
+# verification is available to everyone; opt in to this runner via CI variable.
+macos:
+  stage: verify
+  image: macos-26-xcode-26
+  tags: [saas-macos-medium-m1]
+  rules:
+    - if: '$ENABLE_MACOS_CI == "true"'
+  before_script:
+    - curl --fail --location --output node.tar.gz https://nodejs.org/dist/v24.19.0/node-v24.19.0-darwin-arm64.tar.gz
+    - echo '8294b7aa9b03997481c06babf1e8b270c859358f27da57a11509afe537ac381d  node.tar.gz' | shasum -a 256 --check
+    - tar -xzf node.tar.gz
+    - export PATH="$CI_PROJECT_DIR/node-v24.19.0-darwin-arm64/bin:$PATH"
+  script:
+    - npm ci
+    - npm run check
+    - npm audit --audit-level=high
+    - npm run package:dir

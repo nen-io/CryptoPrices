@@ -1,87 +1,177 @@
-<template>
-  <div id="app">
-    <v-app id="inspire">
-      <nav-bar></nav-bar>
-      <v-container fluid fill-height>
-         <v-fade-transition mode="out-in">
-              <router-view></router-view>
-            </v-fade-transition>
-      </v-container>
-    <v-footer app fixed>
-       
-      <span class="ml-1">&copy; Ajith Abraham 2018</span>
-    </v-footer>
-  </v-app>
-  </div>
-</template>
+<script setup lang="ts">
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { ArrowUpRight, ArrowRight, Plus, Search, ShieldCheck, LockKeyhole, X, LayoutGrid, ChartNoAxesCombined, Wallet as WalletIcon, Settings2, RefreshCw, ChevronLeft, ChevronRight, Star, Trash2, Download, AlertCircle, WifiOff, Check, Eye } from '@lucide/vue';
+import type { ChainId, MarketCoin, Wallet } from '../shared/types';
+import { CHAINS } from '../shared/chains';
+import { useWorkspace } from './useWorkspace';
+import HistoryGallery from './components/HistoryGallery.vue';
+import PriceChart from './components/PriceChart.vue';
 
-<script>
-   import Navbar from './components/Navbar.vue'
-  import {ipcRenderer} from 'electron'
-   
-
-   
-
-  export default {
-    name: 'cryptoprices',
-    components: {
-      'nav-bar': Navbar
-    },
-    mounted(){
-          
-         
-
-           //Calls to Main Process for Coin data and repeats
-           this.$store.dispatch("getData")
-           setInterval(()=>{this.$store.dispatch("getData")}, 1000)
-           
-           //sets the result returned from data->main->app in the vuex store
-           ipcRenderer.on("set-data", (event, data) => {
-            this.$store.commit("setData", data)
-          })
-
-          //Login and signup alerts
-          ipcRenderer.on("alertError", (event, data) => {
-            alert(data)
-          })
-
-          ipcRenderer.on("set-auth", (event, user)=>{
-            console.log("Setting vuex state")
-           
-            this.$store.commit("setAuth")
-            //
-            this.$router.push('home')
-          })
-
-          ipcRenderer.on("set-user", (event, user)=>{
-            console.log("setting vuex user state")
-            console.log(user)
-            this.$store.commit("setUser", user)
-            
-          })
-       
-    
-  },
-    data: () => ({
-        
-     
-    })
-  }
+const { state, demo, available, vault, coins, summary, unlocked, notice, error, busy, privacyEpoch, run, lock, showDemo, backup } = useWorkspace();
+type Page = 'overview' | 'markets' | 'wallets' | 'settings';
+type Modal = 'register' | 'unlock' | 'wallet' | 'holding' | 'scan' | 'remove-wallet' | 'remove-holding' | 'coin';
+const page = ref<Page>('overview');
+const navigation = [{ id: 'overview' as const, label: 'Portfolio', icon: LayoutGrid }, { id: 'markets' as const, label: 'Markets', icon: ChartNoAxesCombined }, { id: 'wallets' as const, label: 'Addresses', icon: WalletIcon }, { id: 'settings' as const, label: 'Settings', icon: Settings2 }];
+const search = ref(''); const watchOnly = ref(false); const marketPage = ref(1); const range = ref<'7d' | '24h'>('7d');
+const online = ref(navigator.onLine); const reduced = ref(matchMedia('(prefers-reduced-motion: reduce)').matches);
+const dialog = ref<HTMLDialogElement | null>(null); const modal = ref<Modal | null>(null); const formError = ref(''); const selectedWallet = ref<Wallet | null>(null); const selectedHolding = ref(''); const selectedCoin = ref<MarketCoin | null>(null);
+const form = reactive({ username: '', password: '', confirm: '', walletName: '', address: '', chain: 'ethereum' as ChainId, coinId: 'bitcoin', quantity: '', consent: false, apiKey: '' });
+const authSubmitting = ref(false); const backupPending = ref(false); let opener: HTMLElement | null = null;
+const selectedChain = computed(() => CHAINS.find(chain => chain.id === form.chain)!);
+const benchmark = computed(() => coins.value.find(coin => coin.id === 'bitcoin') ?? null);
+const benchmarkValues = computed(() => { const values = benchmark.value?.sparkline ?? []; return range.value === '24h' ? values.slice(-Math.max(2, Math.round(values.length / 7))) : values; });
+const allocations = computed(() => summary.value.rows.filter(row => row.value !== null && row.value > 0).sort((a, b) => b.value! - a.value!).slice(0, 4).map(row => ({ ...row, percent: summary.value.total ? (row.value! / summary.value.total * 100) : 0 })));
+const allocationRemainder = computed(() => Math.max(0, 100 - allocations.value.reduce((total, row) => total + row.percent, 0)));
+const allocationColors = ['#344c3f', '#83907a', '#b9ae8f', '#b97554'];
+const totalParts = computed(() => hasKnownValue.value ? money(summary.value.total).slice(1).split('.') : ['—']);
+const filteredCoins = computed(() => coins.value.filter(coin => (!watchOnly.value || vault.value.watchlist.includes(coin.id)) && `${coin.name} ${coin.symbol}`.toLowerCase().includes(search.value.toLowerCase().trim())));
+const pageCount = computed(() => Math.max(1, Math.ceil(filteredCoins.value.length / 50)));
+const pageCoins = computed(() => filteredCoins.value.slice((marketPage.value - 1) * 50, marketPage.value * 50));
+const visibleRows = computed(() => summary.value.rows.filter(row => `${row.name} ${row.symbol}`.toLowerCase().includes(search.value.toLowerCase().trim())));
+const hasPositions = computed(() => summary.value.rows.length > 0);
+const hasKnownValue = computed(() => summary.value.rows.some(row => row.value !== null));
+const unknownWallets = computed(() => vault.value.wallets.filter(wallet => !vault.value.walletScans.some(scan => scan.walletId === wallet.id)).length);
+const cacheAge = computed(() => demo.value ? 'Illustrative sample · never live' : state.value?.markets ? `Prices cached ${when(state.value.markets.fetchedAt)}` : 'No prices cached yet');
+const isWorking = (key: string) => busy.value.includes(key);
+const money = (value: number | null | undefined, compact = false) => value == null || !Number.isFinite(value) ? 'Unknown' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: compact ? 'compact' : 'standard', maximumFractionDigits: value > 0 && value < 1 ? 6 : 2 }).format(value);
+const pct = (value: number | null) => value == null ? '—' : `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+const quantity = (value: string) => { const [whole, decimals] = value.split('.'); return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${decimals ? `.${decimals.length > 8 ? `${decimals.slice(0, 8)}…` : decimals}` : ''}`; };
+function when(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'at an unknown time' : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+const coinFor = (id: string | null) => coins.value.find(coin => coin.id === id);
+const chainFor = (id: ChainId) => CHAINS.find(chain => chain.id === id)!;
+const scanFor = (id: string) => vault.value.walletScans.find(scan => scan.walletId === id);
+const glyph = (symbol: string) => ({ BTC: '₿', ETH: '♦', SOL: '≋', USDC: '$', USDT: '$' }[symbol.toUpperCase()] ?? symbol.slice(0, 1).toUpperCase());
+function changePage(value: Page) { page.value = value; search.value = ''; marketPage.value = 1; nextTick(() => document.querySelector<HTMLElement>('main h1')?.focus({ preventScroll: true })); }
+function clearDrafts() { form.password = ''; form.confirm = ''; form.walletName = ''; form.address = ''; form.quantity = ''; form.apiKey = ''; form.consent = false; formError.value = ''; selectedWallet.value = null; selectedHolding.value = ''; selectedCoin.value = null; }
+function closeDialog() { dialog.value?.close(); modal.value = null; clearDrafts(); opener?.focus(); }
+async function openDialog(kind: Modal) {
+  if (['wallet', 'holding'].includes(kind) && !unlocked.value) { notice.value = 'Create or unlock a local vault to add your own assets. The demo stays separate.'; kind = state.value?.profiles.length ? 'unlock' : 'register'; }
+  opener = document.activeElement as HTMLElement; formError.value = ''; form.password = ''; form.confirm = ''; form.consent = false; modal.value = kind;
+  if (kind === 'unlock') form.username = state.value?.profiles[0]?.username ?? '';
+  if (kind === 'register') form.username = '';
+  if (kind === 'holding') form.coinId = coins.value[0]?.id ?? 'bitcoin';
+  await nextTick(); dialog.value?.showModal();
+}
+async function submitAuth() {
+  if (authSubmitting.value) return;
+  if (modal.value === 'register' && form.password !== form.confirm) { formError.value = 'The passphrases do not match.'; return; }
+  const command = { type: modal.value === 'register' ? 'register' as const : 'unlock' as const, username: form.username.trim(), password: form.password };
+  authSubmitting.value = true;
+  const ok = await run(command); authSubmitting.value = false; form.password = ''; form.confirm = '';
+  if (ok) { closeDialog(); page.value = 'overview'; notice.value = command.type === 'register' ? 'Your private workspace is ready. Add a holding or a public address to begin.' : 'Welcome back. Your vault is unlocked.'; }
+}
+async function submitWallet() {
+  const ok = await run({ type: 'wallet:add', name: form.walletName.trim(), chain: form.chain, address: form.address.trim() });
+  if (ok) { closeDialog(); page.value = 'wallets'; notice.value = 'Address saved locally. Choose Refresh when you want to contact its provider.'; }
+}
+async function submitHolding() { const ok = await run({ type: 'holding:add', coinId: form.coinId, quantity: form.quantity.trim() }); if (ok) { closeDialog(); notice.value = 'Holding saved. Manual holdings are added to any balances from your tracked wallets.'; } }
+async function refreshWallet() { if (!selectedWallet.value || !form.consent) return; const id = selectedWallet.value.id; closeDialog(); const ok = await run({ type: 'wallet:refresh', id, consent: true }); if (ok) notice.value = 'Wallet refresh finished. Review its coverage and any provider warnings below.'; }
+async function requestScan(wallet: Wallet) { selectedWallet.value = wallet; await openDialog('scan'); }
+async function requestRemoveWallet(wallet: Wallet) { selectedWallet.value = wallet; await openDialog('remove-wallet'); }
+async function removeWallet() { if (!selectedWallet.value) return; const ok = await run({ type: 'wallet:remove', id: selectedWallet.value.id }); if (ok) { closeDialog(); notice.value = 'Address and its cached balances removed from this vault.'; } }
+async function requestRemoveHolding(id: string) { selectedHolding.value = id; await openDialog('remove-holding'); }
+async function removeHolding() { const ok = await run({ type: 'holding:remove', id: selectedHolding.value }); if (ok) { closeDialog(); notice.value = 'Manual holding removed.'; } }
+async function coinDetail(coin: MarketCoin) { selectedCoin.value = coin; await openDialog('coin'); }
+async function refreshMarkets() { if (!online.value) { error.value = 'You are offline. Your cached data is still available.'; return; } const ok = await run({ type: 'markets:refresh' }); if (ok) notice.value = 'Market refresh finished. Snapshot completeness and provider warnings are shown below.'; }
+async function saveKey(remove = false) { const key = remove ? '' : form.apiKey.trim(); form.apiKey = ''; const ok = await run({ type: 'settings:key', key }); if (ok) notice.value = remove ? 'CoinGecko Demo API key removed.' : 'API key saved inside your encrypted vault.'; }
+async function exportBackup() { if (backupPending.value) return; backupPending.value = true; await backup(); backupPending.value = false; }
+async function openArtworkSource(url: string) {
+  const api = window.cryptoPrices;
+  if (!api) { notice.value = 'Open museum sources from the CryptoPrices desktop app.'; return; }
+  try { const result = await api.openSource(url); if (!result.ok) error.value = result.error ?? 'The museum source could not be opened.'; }
+  catch { error.value = 'The museum source could not be opened. Please try again.'; }
+}
+function dialogBackdrop(event: MouseEvent) {
+  if (event.target !== dialog.value || !dialog.value) return;
+  const bounds = dialog.value.getBoundingClientRect();
+  if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) closeDialog();
+}
+function connectionChanged() { online.value = navigator.onLine; }
+watch([search, watchOnly], () => { marketPage.value = 1; });
+watch(pageCount, total => { marketPage.value = Math.min(marketPage.value, total); });
+watch(privacyEpoch, () => { clearDrafts(); search.value = ''; if (!authSubmitting.value) { closeDialog(); form.username = ''; } });
+onMounted(() => { window.addEventListener('online', connectionChanged); window.addEventListener('offline', connectionChanged); });
+onUnmounted(() => { window.removeEventListener('online', connectionChanged); window.removeEventListener('offline', connectionChanged); });
 </script>
 
-<style>
-  @import url('https://fonts.googleapis.com/css?family=Roboto:300,400,500,700|Material+Icons');
-  /* Global CSS */
+<template>
+  <div class="app-shell" :class="{ 'reduced-motion': reduced, 'demo-mode': demo }">
+    <div class="titlebar"><span>CryptoPrices</span><span class="titlebar-status"><i></i> The Collector · local portfolio</span></div>
+    <div class="collector-shell">
+    <header class="collector-header">
+      <button class="collector-wordmark" aria-label="CryptoPrices portfolio" @click="changePage('overview')">CP<span>CRYPTO<br>PRICES</span></button>
+      <nav class="collector-nav" aria-label="Main navigation"><button v-for="item in navigation" :key="item.id" :class="{ active: page === item.id }" :aria-current="page === item.id ? 'page' : undefined" @click="changePage(item.id)"><component :is="item.icon" :size="16"/><span>{{ item.label }}</span><span v-if="item.id === 'wallets' && vault.wallets.length" class="nav-count">{{ vault.wallets.length }}</span></button></nav>
+      <div class="collector-profile"><span class="avatar" aria-hidden="true">{{ demo ? 'C' : (state?.profile?.username[0] ?? '·').toUpperCase() }}</span><div><strong>{{ demo ? 'The sample collection' : state?.profile?.username ?? 'Vault locked' }}</strong><span>{{ demo ? 'ILLUSTRATIVE WORKSPACE' : unlocked ? 'ENCRYPTED LOCAL VAULT' : 'LOCAL WORKSPACE' }}</span></div></div>
+    </header>
+    <main class="main-content">
+      <div class="workspace-header"><span class="workspace-caption"><LockKeyhole :size="14"/> Your collection, kept local.</span><div class="header-actions"><span class="connection-label" v-if="!online"><WifiOff :size="14"/> Offline</span><template v-if="!unlocked"><button class="quiet-button" v-if="state?.profiles.length" @click="openDialog('unlock')"><LockKeyhole :size="14"/> Unlock vault</button><button class="small-primary" @click="openDialog('register')">Create local vault <Plus :size="14"/></button></template><button v-else class="quiet-button" @click="lock"><LockKeyhole :size="15"/> Lock vault</button></div></div>
+      <div v-if="demo" class="demo-banner"><span><i></i><b>EXAMPLE WORKSPACE</b> Illustrative data. Your own portfolio starts empty.</span><button @click="openDialog(state?.profiles.length ? 'unlock' : 'register')">Make it yours <ArrowRight :size="14"/></button></div>
+      <div v-if="!available" class="inline-note">Browser preview. Create a vault and save changes in the CryptoPrices desktop app.</div>
+      <div v-if="error" class="message error" role="alert"><AlertCircle :size="18"/><span>{{ error }}</span><button class="icon-button" aria-label="Dismiss error" @click="error = ''"><X :size="16"/></button></div>
+      <div v-if="notice" class="message notice" role="status"><Check :size="18"/><span>{{ notice }}</span><button class="icon-button" aria-label="Dismiss message" @click="notice = ''"><X :size="16"/></button></div>
+      <div v-if="!online" class="inline-note"><WifiOff :size="15"/> Offline. Saved holdings and cached prices stay available; refresh waits for a connection.</div>
 
- html {
-    overflow: scroll;
-    overflow-x: hidden;
-}
-::-webkit-scrollbar {
-    width: 0;
-    background: transparent;  /* optional: just make scrollbar invisible */
-}
+      <section v-if="!demo && !unlocked && page !== 'settings'" class="locked-scene enter">
+        <div class="locked-content"><span class="eyebrow">YOUR LOCAL COLLECTION</span><div class="locked-emblem"><LockKeyhole :size="32" :stroke-width="1"/></div><h1 tabindex="-1">Your vault.<br><em>Ready when you are.</em></h1><p>Your holdings and public addresses are encrypted on this computer. Unlock your collection to continue.</p><div class="action-row"><button class="primary" @click="openDialog(state?.profiles.length ? 'unlock' : 'register')"><LockKeyhole :size="16"/> {{ state?.profiles.length ? 'Unlock your vault' : 'Create local vault' }}</button><button class="underlined" @click="showDemo">Explore sample data <ArrowRight :size="16"/></button></div><p class="small-note">No cloud account. No wallet connection. You choose when to refresh.</p></div>
+        <aside class="collector-history" aria-label="Money through history"><HistoryGallery :reduced-motion="reduced" :paused="Boolean(modal)" @open-source="openArtworkSource"/></aside>
+      </section>
 
+      <template v-else-if="page === 'overview'">
+        <div class="collector-heading enter"><div><span class="eyebrow">YOUR PRIVATE COLLECTION <span class="edition-number">Nº 001</span></span><h1 tabindex="-1">Portfolio</h1></div><div class="action-row"><button class="secondary" @click="openDialog('holding')"><Plus :size="15"/> Add holding</button><button class="primary" @click="openDialog('wallet')"><WalletIcon :size="16"/> Track address</button></div></div>
+        <div class="collector-grid">
+          <div class="collector-main">
+            <section class="collector-overview enter" aria-label="Portfolio value and allocation">
+              <div class="collector-value-label"><span class="eyebrow muted">{{ demo ? 'ILLUSTRATIVE TOTAL' : 'KNOWN PRICED VALUE' }} · USD</span><span><Eye :size="14"/> Watch-only</span></div>
+              <div class="collector-total" :class="{ 'long-total': totalParts[0].length > 10 }">{{ totalParts[0] }}<span v-if="totalParts[1]">.{{ totalParts[1] }}</span></div>
+              <div class="value-context"><span class="status-dot"></span><span>{{ cacheAge }}</span></div>
+              <div v-if="!demo && (summary.unpriced || summary.incomplete)" class="value-warning"><AlertCircle :size="16"/><span>Partial estimate · {{ summary.unpriced }} unpriced {{ summary.unpriced === 1 ? 'asset' : 'assets' }}<template v-if="summary.incomplete"> · {{ unknownWallets ? `${unknownWallets} unscanned` : 'incomplete' }} {{ unknownWallets === 1 ? 'address' : 'addresses' }}</template></span></div>
+              <p v-else-if="!demo && !hasPositions" class="value-description">Your collection starts empty. Add a holding or public address to begin.</p>
+              <div class="collector-stats"><div><b>{{ String(summary.rows.length).padStart(2, '0') }}</b><span>ASSETS</span></div><div><b>{{ String(vault.wallets.length).padStart(2, '0') }}</b><span>ADDRESSES</span></div><div><b>{{ demo ? '—' : String(vault.walletScans.length).padStart(2, '0') }}</b><span>WALLET OBSERVATIONS</span></div></div>
+              <div class="collector-allocation"><div class="allocation-heading"><span class="eyebrow muted">PRICED ALLOCATION</span><span>Unpriced assets excluded</span></div><template v-if="allocations.length"><div class="allocation-track" aria-hidden="true"><i v-for="(row, index) in allocations" :key="row.key" :style="{ flex: row.percent, background: allocationColors[index] }"></i><i v-if="allocationRemainder > .01" :style="{ flex: allocationRemainder, background: '#d2cbb9' }"></i></div><div class="allocation-legend"><span v-for="(row, index) in allocations" :key="row.key"><i :style="{ background: allocationColors[index] }"></i>{{ row.symbol.toUpperCase() }} <b>{{ row.percent.toFixed(1) }}%</b></span><span v-if="allocationRemainder > .01"><i style="background:#d2cbb9"></i>Other <b>{{ allocationRemainder.toFixed(1) }}%</b></span></div></template><p v-else class="small-note">Allocation appears when your holdings have cached prices.</p></div>
+            </section>
+        <section class="holdings-section enter delay-two"><div class="section-header"><div class="section-title"><span class="section-index">02 /</span><h2>Holdings</h2><span class="muted">{{ summary.rows.length }} {{ summary.rows.length === 1 ? 'asset' : 'assets' }}</span></div><label class="search-field"><Search :size="15"/><input v-model="search" type="search" placeholder="Find an asset" aria-label="Search holdings"></label></div><div v-if="hasPositions" class="table-scroll"><table class="asset-table"><thead><tr><th>ASSET</th><th>PRICE</th><th>24H</th><th>QUANTITY</th><th>ESTIMATED VALUE</th></tr></thead><tbody><tr v-for="row in visibleRows" :key="row.key"><td><div class="asset-name"><span class="coin-icon" :data-symbol="row.symbol.toUpperCase()">{{ glyph(row.symbol) }}</span><div><strong>{{ row.name }}</strong><span>{{ row.symbol.toUpperCase() }} · {{ row.sources }} {{ row.sources === 1 ? 'source' : 'sources' }}</span></div></div></td><td>{{ money(coinFor(row.coinId)?.price) }}</td><td :class="{ positive: (coinFor(row.coinId)?.change24h ?? 0) >= 0, negative: (coinFor(row.coinId)?.change24h ?? 0) < 0 }">{{ pct(coinFor(row.coinId)?.change24h ?? null) }}</td><td :title="row.quantity">{{ quantity(row.quantity) }}</td><td><strong>{{ money(row.value) }}</strong><span v-if="row.value === null" class="cell-note">Awaiting a matching price</span></td></tr><tr v-if="!visibleRows.length"><td colspan="5" class="empty-cell">No assets match that search.</td></tr></tbody></table></div><div v-else class="empty-state"><span class="empty-symbol">＋</span><div><h3>A collection begins with one.</h3><p>Add a manual holding or track a public wallet address. Missing balances are always unknown, never silently zero.</p></div><button class="secondary" @click="openDialog('holding')">Add your first holding <ArrowRight :size="15"/></button></div><div class="section-foot"><span>Estimates combine manual holdings and observed wallet balances. Avoid adding the same assets twice.</span><button class="quiet-button" @click="changePage('wallets')">Manage your sources <ArrowRight :size="14"/></button></div></section>
+        <section v-if="vault.manualHoldings.length" class="manual-section"><div class="section-header"><h3>Manual holdings</h3><button class="quiet-button" @click="openDialog('holding')"><Plus :size="14"/> Add holding</button></div><div class="manual-list"><div v-for="holding in vault.manualHoldings" :key="holding.id"><span>{{ coinFor(holding.coinId)?.name ?? holding.coinId }}</span><span :title="holding.quantity">{{ quantity(holding.quantity) }} {{ coinFor(holding.coinId)?.symbol.toUpperCase() }}</span><button class="icon-button" :disabled="demo" :aria-label="`Remove ${coinFor(holding.coinId)?.name ?? holding.coinId} manual holding`" @click="requestRemoveHolding(holding.id)"><Trash2 :size="15"/></button></div></div><p v-if="demo" class="small-note">Sample holdings are read-only. Create your own vault to make this collection yours.</p></section>
+            <section class="collector-benchmark enter" aria-label="Bitcoin market benchmark"><div class="benchmark-heading"><div><span class="eyebrow muted">MARKET BENCHMARK</span><h2>Bitcoin</h2><strong>{{ money(benchmark?.price) }}</strong><p>{{ demo ? 'Illustrative' : 'Cached' }} {{ range === '7d' ? '7-day' : 'last-day' }} price trend.<br>Not your portfolio performance.</p></div><div class="benchmark-chart"><PriceChart :values="benchmarkValues" :label="`Bitcoin ${range} price trend`" :sample="demo"/></div></div><div class="chart-controls"><div class="segmented" aria-label="Bitcoin trend range"><button :class="{ active: range === '7d' }" :aria-pressed="range === '7d'" @click="range = '7d'">7 days</button><button :class="{ active: range === '24h' }" :aria-pressed="range === '24h'" @click="range = '24h'">Last day</button></div><button class="quiet-button" :disabled="isWorking('markets:refresh') || !online" @click="refreshMarkets"><RefreshCw :size="14" :class="{ spinning: isWorking('markets:refresh') }"/> {{ isWorking('markets:refresh') ? 'Refreshing…' : 'Refresh markets' }}</button></div></section>
+          </div>
+          <aside class="collector-history enter delay-one" aria-label="Money through history"><HistoryGallery :reduced-motion="reduced" :paused="Boolean(modal)" @open-source="openArtworkSource"/></aside>
+        </div>
+      </template>
 
+      <template v-else-if="page === 'markets'">
+        <div class="page-heading enter"><div><span class="eyebrow">THE MARKET DIRECTORY</span><h1 tabindex="-1">Markets</h1><p>Native assets and tokens, with explicit prices and observation times.</p></div><button class="primary" :disabled="isWorking('markets:refresh') || !online" @click="refreshMarkets"><RefreshCw :size="16" :class="{ spinning: isWorking('markets:refresh') }"/> {{ isWorking('markets:refresh') ? 'Refreshing…' : 'Refresh markets' }}</button></div>
+        <div class="market-status"><div><span class="eyebrow muted">THE DIRECTORY</span><strong>{{ coins.length.toLocaleString() }}<small> assets</small></strong></div><div><span class="eyebrow muted">PRICE SNAPSHOT</span><p>{{ cacheAge }}</p></div><div><span class="eyebrow muted">CONTRACT CATALOGUE</span><p>{{ demo ? 'Sample mode' : `${state?.catalogueCount.toLocaleString() ?? 0} mapped contracts` }}</p></div></div>
+        <div v-if="!demo && state?.markets && (!state.markets.complete || state.markets.warnings.length)" class="coverage-note"><AlertCircle :size="17"/><div><strong>{{ state.markets.complete ? 'Provider notes' : 'This market snapshot is incomplete' }}</strong><p>{{ state.markets.coins.length }} of {{ state.markets.requestedCount }} requested assets; {{ state.markets.pagesFetched }} pages received.</p><p v-for="warning in state.markets.warnings" :key="warning">{{ warning }}</p></div></div>
+        <div class="market-toolbar"><div class="segmented"><button :class="{ active: !watchOnly }" :aria-pressed="!watchOnly" @click="watchOnly = false">All assets</button><button :class="{ active: watchOnly }" :aria-pressed="watchOnly" @click="watchOnly = true"><Star :size="13"/> Watchlist</button></div><label class="search-field wide"><Search :size="16"/><input v-model="search" type="search" placeholder="Search name or symbol" aria-label="Search markets"></label></div>
+        <div class="table-scroll"><table class="asset-table market-table"><thead><tr><th><span class="sr-only">Watchlist</span></th><th>ASSET</th><th>PRICE</th><th>24H</th><th>MARKET CAP</th><th>DETAIL</th></tr></thead><tbody><tr v-for="coin in pageCoins" :key="coin.id"><td><button class="icon-button watch-button" :class="{ watched: vault.watchlist.includes(coin.id) }" :aria-label="`${vault.watchlist.includes(coin.id) ? 'Remove' : 'Add'} ${coin.name} ${vault.watchlist.includes(coin.id) ? 'from' : 'to'} watchlist`" :aria-pressed="vault.watchlist.includes(coin.id)" :disabled="isWorking('watchlist:toggle')" @click="run({ type: 'watchlist:toggle', coinId: coin.id })"><Star :size="16"/></button></td><td><button class="asset-name coin-link" @click="coinDetail(coin)"><span class="coin-icon" :data-symbol="coin.symbol.toUpperCase()">{{ glyph(coin.symbol) }}</span><span><strong>{{ coin.name }}</strong><span>{{ coin.symbol.toUpperCase() }}<template v-if="coin.rank"> · #{{ coin.rank }}</template></span></span></button></td><td>{{ money(coin.price) }}</td><td :class="{ positive: (coin.change24h ?? 0) >= 0, negative: (coin.change24h ?? 0) < 0 }">{{ pct(coin.change24h) }}</td><td>{{ money(coin.marketCap, true) }}</td><td><button class="icon-button" :aria-label="`View ${coin.name} detail`" @click="coinDetail(coin)"><ArrowUpRight :size="17"/></button></td></tr><tr v-if="!pageCoins.length"><td colspan="6" class="empty-cell">{{ watchOnly ? 'No matching watchlist assets. Add a star to keep an asset in view.' : 'No assets match that search.' }}</td></tr></tbody></table></div>
+        <div class="pagination"><span>{{ filteredCoins.length ? (marketPage - 1) * 50 + 1 : 0 }}–{{ Math.min(marketPage * 50, filteredCoins.length) }} of {{ filteredCoins.length }} assets</span><div><button class="icon-button" aria-label="Previous market page" :disabled="marketPage <= 1" @click="marketPage--"><ChevronLeft :size="18"/></button><span>{{ marketPage }} / {{ pageCount }}</span><button class="icon-button" aria-label="Next market page" :disabled="marketPage >= pageCount" @click="marketPage++"><ChevronRight :size="18"/></button></div></div><div class="section-foot"><span>Market listing and wallet support are separate. See Settings for the networks and token coverage this app can observe.</span></div>
+      </template>
 
-</style>
+      <template v-else-if="page === 'wallets'">
+        <div class="page-heading enter"><div><span class="eyebrow">PUBLIC ADDRESSES · WATCH-ONLY</span><h1 tabindex="-1">Addresses</h1><p>Public addresses only. Your keys stay in your wallet.</p></div><button class="primary" @click="openDialog('wallet')"><Plus :size="17"/> Track address</button></div>
+        <div v-if="!vault.wallets.length" class="empty-state wallet-empty"><Eye :size="37" :stroke-width="1"/><div><h3>Your first public address.</h3><p>Add a public address on one of {{ CHAINS.length }} supported networks. Saving is offline; you choose when its provider is contacted.</p></div><button class="secondary" @click="openDialog('wallet')">Add a public address <ArrowRight :size="15"/></button></div>
+        <div class="wallet-list"><article v-for="wallet in vault.wallets" :key="wallet.id" class="wallet-entry"><div class="wallet-top"><div class="wallet-identity"><span class="coin-icon">{{ glyph(chainFor(wallet.chain).symbol) }}</span><div><h2>{{ wallet.name }}</h2><span>{{ chainFor(wallet.chain).name }} · Watch-only</span></div></div><div class="wallet-controls"><button class="secondary" :disabled="isWorking(`wallet:refresh:${wallet.id}`) || !online" @click="requestScan(wallet)"><RefreshCw :size="15" :class="{ spinning: isWorking(`wallet:refresh:${wallet.id}`) }"/> {{ isWorking(`wallet:refresh:${wallet.id}`) ? 'Refreshing…' : 'Refresh' }}</button><button class="icon-button" :aria-label="`Remove ${wallet.name}`" @click="requestRemoveWallet(wallet)"><Trash2 :size="16"/></button></div></div><code class="wallet-address">{{ wallet.address }}</code><div class="wallet-observation"><span :class="{ 'status-complete': scanFor(wallet.id)?.complete }"><i></i>{{ !scanFor(wallet.id) ? 'Not observed yet · balances unknown' : scanFor(wallet.id)?.complete ? 'Scan complete for stated scope' : 'Partial scan · some balances unknown' }}</span><span>{{ scanFor(wallet.id) ? `Observed ${when(scanFor(wallet.id)!.fetchedAt)}` : 'No provider contacted' }}</span></div><div class="wallet-provider"><span>{{ chainFor(wallet.chain).provider }}</span><span v-if="scanFor(wallet.id)">{{ scanFor(wallet.id)!.balances.length }} balances<template v-if="wallet.chain !== 'bitcoin'"> · {{ scanFor(wallet.id)!.scannedContracts }}/{{ scanFor(wallet.id)!.totalContracts }} {{ wallet.chain === 'solana' ? 'token accounts checked' : 'catalogued contracts checked' }}</template></span></div><div v-if="scanFor(wallet.id)?.warnings.length" class="wallet-warnings"><p v-for="warning in scanFor(wallet.id)!.warnings" :key="warning"><AlertCircle :size="13"/> {{ warning }}</p></div><div v-if="scanFor(wallet.id)?.balances.length" class="observed-balances"><div v-for="(balance, index) in scanFor(wallet.id)!.balances" :key="`${balance.contract ?? balance.coinId}-${index}`"><span>{{ balance.symbol.toUpperCase() }}</span><span :title="balance.quantity">{{ quantity(balance.quantity) }}</span><span>{{ balance.coinId ? money(coinFor(balance.coinId)?.price == null ? null : Number(balance.quantity) * coinFor(balance.coinId)!.price!) : 'Unpriced' }}</span></div></div></article></div>
+        <div class="privacy-note"><ShieldCheck :size="22"/><div><h3>Connected by choice.</h3><p>A refresh sends the selected address and your IP to its named provider. Token discovery has limits; unsupported, unavailable, and unpriced assets stay explicit. Addresses and balances are encrypted in your local vault.</p></div></div>
+      </template>
+
+      <template v-else-if="page === 'settings'">
+        <div class="page-heading enter"><div><span class="eyebrow">YOUR WORKSPACE</span><h1 tabindex="-1">Settings</h1><p>Local storage, market providers, and display preferences.</p></div><ShieldCheck :size="45" :stroke-width="1"/></div>
+        <section class="settings-section"><div><span class="section-index">01 /</span><h2>Your local vault</h2><p>{{ unlocked ? `Signed in locally as ${state?.profile?.username}.` : 'Create or unlock a local profile to store your own portfolio.' }}</p></div><div class="settings-content"><p>Holdings, public addresses, and the API key are encrypted locally. Profile names are visible in local account metadata, so choose a label you are comfortable leaving unencrypted.</p><p>There is no cloud account or passphrase recovery. Keep an encrypted backup and your passphrase somewhere safe.</p><div class="action-row"><template v-if="unlocked"><button class="secondary" :disabled="backupPending" @click="exportBackup"><Download :size="16"/> {{ backupPending ? 'Exporting…' : 'Export encrypted backup' }}</button><button class="quiet-button" @click="lock"><LockKeyhole :size="15"/> Lock vault</button></template><template v-else><button class="secondary" @click="openDialog('register')">Create local vault <Plus :size="15"/></button><button v-if="state?.profiles.length" class="quiet-button" @click="openDialog('unlock')">Unlock existing vault</button></template></div></div></section>
+        <section class="settings-section"><div><span class="section-index">02 /</span><h2>Market data</h2><p>CoinGecko · prices and contract catalogue</p></div><div class="settings-content"><p>Refresh explicitly to request the top 1,000 market assets and their supported token contracts. Provider limits can return a smaller snapshot. Opening the app makes no market request.</p><form @submit.prevent="saveKey()"><label class="field">CoinGecko Demo API key <span class="optional">optional</span><input v-model="form.apiKey" type="password" autocomplete="off" placeholder="Paste a Demo API key" maxlength="256" :disabled="!unlocked"></label><p class="small-note">{{ vault.settings.hasApiKey ? 'A key is saved in your encrypted vault. Its value is never returned to this screen.' : 'No key saved. Public requests may be limited.' }}</p><div class="action-row"><button class="secondary" :disabled="!unlocked || !form.apiKey.trim() || isWorking('settings:key')" type="submit"><Check :size="15"/> Save key</button><button v-if="vault.settings.hasApiKey" class="quiet-button danger" type="button" :disabled="isWorking('settings:key')" @click="saveKey(true)">Remove saved key</button></div></form></div></section>
+        <section class="settings-section"><div><span class="section-index">03 /</span><h2>What we can see</h2><p>Network support is explicit.</p></div><div class="settings-content"><p>Bitcoin native balances; seven EVM networks with native coins and catalogued ERC-20 tokens; Solana native and token-account balances. This does not include every asset, NFT, DeFi position, staked balance, or network in the market directory.</p><div class="network-directory"><div v-for="chain in CHAINS" :key="chain.id"><strong>{{ chain.name }}</strong><span>{{ chain.provider }}</span></div></div><p class="small-note">Each scan reports its scope and any limits. A provider error is never a zero balance. Public addresses can reveal your financial activity; refresh only when you want to share an address with its provider.</p></div></section>
+        <section class="settings-section"><div><span class="section-index">04 /</span><h2>A quieter experience</h2><p>Movement, at your pace.</p></div><div class="settings-content"><label class="toggle-row"><span><strong>Reduce motion</strong><small>Limit entrances and decorative movement in this session.</small></span><input v-model="reduced" type="checkbox" role="switch" aria-label="Reduce motion"></label><button v-if="!demo" class="quiet-button" @click="showDemo">{{ unlocked ? 'Lock vault and explore the demo' : 'Explore the sample collection' }} <ArrowRight :size="15"/></button></div></section>
+      </template>
+      <footer class="app-footer"><span>CRYPTO<strong>PRICES.</strong> <i>THE COLLECTOR</i></span><span>{{ demo ? 'SAMPLE DATA · NO LIVE BALANCES' : 'LOCAL FIRST · WATCH ONLY' }}</span></footer>
+    </main>
+    </div>
+
+    <dialog ref="dialog" class="app-dialog" @cancel.prevent="closeDialog" @click="dialogBackdrop" :aria-labelledby="modal === 'coin' ? 'coin-title' : 'dialog-title'">
+      <div class="dialog-top"><span class="eyebrow muted">{{ modal === 'coin' ? 'A CLOSER LOOK' : 'YOUR LOCAL WORKSPACE' }}</span><button class="icon-button" aria-label="Close dialog" @click="closeDialog"><X :size="20"/></button></div>
+      <template v-if="modal === 'register' || modal === 'unlock'"><h2 id="dialog-title">{{ modal === 'register' ? 'Create your local vault.' : 'Welcome back.' }}</h2><p>{{ modal === 'register' ? 'A local profile. An encrypted vault. No email, no cloud account.' : 'Unlock your local vault with its passphrase.' }}</p><form @submit.prevent="submitAuth"><label v-if="modal === 'unlock' && state?.profiles.length" class="field">Local profile<select v-model="form.username" required autofocus><option v-for="profile in state.profiles" :key="profile.id" :value="profile.username">{{ profile.username }}</option></select></label><label v-else class="field">Profile name<input v-model="form.username" required minlength="3" maxlength="32" autocomplete="username" placeholder="e.g. My workspace" autofocus></label><label class="field">Passphrase<input v-model="form.password" type="password" required :minlength="modal === 'register' ? 12 : undefined" :autocomplete="modal === 'register' ? 'new-password' : 'current-password'" :placeholder="modal === 'register' ? 'At least 12 characters' : 'Your local passphrase'"></label><label v-if="modal === 'register'" class="field">Confirm passphrase<input v-model="form.confirm" type="password" required minlength="12" autocomplete="new-password" placeholder="Once more, to be sure"></label><div v-if="modal === 'register'" class="dialog-note"><LockKeyhole :size="17"/><span>No passphrase recovery. Back up your vault after creating it. Your profile name is unencrypted local metadata; your portfolio is encrypted.</span></div><p v-if="formError || error" class="form-error" role="alert">{{ formError || error }}</p><button class="primary full-width" :disabled="authSubmitting || !available" type="submit"><LockKeyhole :size="16"/> {{ authSubmitting ? 'Opening your vault…' : modal === 'register' ? 'Create local vault' : 'Unlock vault' }}</button><button v-if="state?.profiles.length" class="dialog-alternative" type="button" @click="openDialog(modal === 'register' ? 'unlock' : 'register')">{{ modal === 'register' ? 'Already have a local profile? Unlock it.' : 'Create a different local profile' }}</button></form></template>
+      <template v-else-if="modal === 'wallet'"><h2 id="dialog-title">Track a public address.</h2><p>Save a public address. We never need a private key or recovery phrase.</p><form @submit.prevent="submitWallet"><label class="field">Wallet label<input v-model="form.walletName" required maxlength="60" placeholder="e.g. Long-term savings" autofocus></label><label class="field">Network<select v-model="form.chain"><option v-for="chain in CHAINS" :key="chain.id" :value="chain.id">{{ chain.name }}</option></select></label><label class="field">Public address<input v-model="form.address" required maxlength="128" autocomplete="off" spellcheck="false" placeholder="Paste a public address"></label><div class="dialog-note"><ShieldCheck :size="18"/><span>Saving is offline. A later refresh sends this address and your IP to <strong>{{ selectedChain.provider }}</strong>, after your confirmation.</span></div><p v-if="error" class="form-error" role="alert">{{ error }}</p><button class="primary full-width" :disabled="isWorking('wallet:add')" type="submit"><Plus :size="16"/> {{ isWorking('wallet:add') ? 'Saving…' : 'Save public address locally' }}</button></form></template>
+      <template v-else-if="modal === 'holding'"><h2 id="dialog-title">Add a manual holding.</h2><p>A manual balance for assets you want to keep in view.</p><form @submit.prevent="submitHolding"><label class="field">Asset<select v-model="form.coinId" required autofocus><option v-for="coin in coins" :key="coin.id" :value="coin.id">{{ coin.name }} ({{ coin.symbol.toUpperCase() }})</option></select></label><label class="field">Quantity<input v-model="form.quantity" required inputmode="decimal" pattern="[0-9]+(\.[0-9]+)?" placeholder="0.00" maxlength="80"></label><div class="dialog-note"><AlertCircle :size="17"/><span>Manual holdings are added to observed wallet balances. Do not enter assets already included in a tracked wallet.</span></div><p v-if="!state?.markets" class="small-note">Refresh markets for the broader asset directory. You can save a holding offline; its value stays unknown until a price is cached.</p><p v-if="error" class="form-error" role="alert">{{ error }}</p><button class="primary full-width" :disabled="isWorking('holding:add')" type="submit"><Plus :size="16"/> {{ isWorking('holding:add') ? 'Saving…' : 'Add holding' }}</button></form></template>
+      <template v-else-if="modal === 'scan' && selectedWallet"><h2 id="dialog-title">Refresh this address?</h2><p>A refresh contacts the balance provider for this address.</p><div class="consent-summary"><strong>{{ selectedWallet.name }} · {{ chainFor(selectedWallet.chain).name }}</strong><code>{{ selectedWallet.address }}</code><span>{{ chainFor(selectedWallet.chain).provider }}</span></div><div class="dialog-note"><Eye :size="18"/><span>This provider receives your public address and IP. Native balances and supported token balances are requested. Limits and missing coverage are reported; no transaction is signed.</span></div><form @submit.prevent="refreshWallet"><label class="consent-check"><input v-model="form.consent" type="checkbox" required><span>Share this address with the named provider for this refresh.</span></label><button class="primary full-width" type="submit" :disabled="!form.consent || !online"><RefreshCw :size="16"/> Refresh this wallet</button></form></template>
+      <template v-else-if="modal === 'remove-wallet' || modal === 'remove-holding'"><h2 id="dialog-title">{{ modal === 'remove-wallet' ? 'Remove this address?' : 'Remove this holding?' }}</h2><p>{{ modal === 'remove-wallet' ? `Remove ${selectedWallet?.name} and its cached observations from this local vault. The wallet itself is unaffected.` : 'This removes the manual balance from your local portfolio. You can add it again later.' }}</p><div class="action-row"><button class="secondary" @click="closeDialog">Keep it</button><button class="primary destructive" :disabled="isWorking(modal === 'remove-wallet' ? 'wallet:remove' : 'holding:remove')" @click="modal === 'remove-wallet' ? removeWallet() : removeHolding()"><Trash2 :size="16"/> Remove {{ modal === 'remove-wallet' ? 'address' : 'holding' }}</button></div><p v-if="error" class="form-error" role="alert">{{ error }}</p></template>
+      <template v-else-if="modal === 'coin' && selectedCoin"><div class="coin-detail-heading"><span class="coin-icon">{{ glyph(selectedCoin.symbol) }}</span><div><h2 id="coin-title">{{ selectedCoin.name }}</h2><span>{{ selectedCoin.symbol.toUpperCase() }}<template v-if="selectedCoin.rank"> · Market rank {{ selectedCoin.rank }}</template></span></div></div><div class="coin-detail-price">{{ money(selectedCoin.price) }}<span :class="{ negative: (selectedCoin.change24h ?? 0) < 0 }">{{ pct(selectedCoin.change24h) }} <small>24H</small></span></div><PriceChart :values="selectedCoin.sparkline" :label="`${selectedCoin.name} 7-day price trend`" :sample="demo"/><div class="detail-facts"><span>{{ demo ? 'Illustrative 7-day trend' : 'Cached 7-day trend' }}</span><span>Market cap {{ money(selectedCoin.marketCap, true) }}</span></div><p class="small-note">{{ cacheAge }}. A market listing does not guarantee wallet tracking support.</p><button class="secondary full-width" :disabled="isWorking('watchlist:toggle')" @click="run({ type: 'watchlist:toggle', coinId: selectedCoin.id })"><Star :size="16"/> {{ vault.watchlist.includes(selectedCoin.id) ? 'Remove from watchlist' : 'Add to watchlist' }}</button></template>
+    </dialog>
+  </div>
+</template>
