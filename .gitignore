@@ -11,3 +11,5 @@ playwright-report/
 .scratch/
 .playwright-cli/
 output/playwright/
+
+/cryptoprices-*-review.tar.gz

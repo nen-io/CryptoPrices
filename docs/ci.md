@@ -6,7 +6,9 @@ pull requests with a macOS/Windows/Linux matrix, Node 24, type checks, all tests
 artwork validation, the dependency audit and unpacked host-platform builds. macOS
 also runs the native Electron interaction tests with a disposable database.
 Actions are pinned by commit SHA and have read-only repository permissions.
-Review artifacts expire after seven days; this workflow does not publish releases.
+Unpacked applications are wrapped in `.tar.gz` files before artifact upload to
+preserve executable permissions and symlinks. macOS UI evidence is uploaded
+separately, including on test failure. Review artifacts expire after seven days; this workflow does not publish releases.
 
 The optional root `.gitlab-ci.yml` supports GitLab mirrors. It runs verification
 and unpacked builds for branch pushes and merge requests, suppressing duplicate
