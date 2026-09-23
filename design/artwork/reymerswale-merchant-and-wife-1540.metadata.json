@@ -1,0 +1,39 @@
+{
+  "object_number": "KMSsp334",
+  "frontend_url": "https://open.smk.dk/artwork/image/KMSsp334",
+  "artist": [
+    "Marinus van Reymerswale"
+  ],
+  "titles": [
+    {
+      "title": "Købmanden med sin kone",
+      "type": "museumstitel",
+      "language": "dansk"
+    },
+    {
+      "title": "Skatteopkræveren med sin kone",
+      "type": "tidligere titel",
+      "language": "dansk"
+    }
+  ],
+  "production_date": [
+    {
+      "start": "1540-01-01T00:00:00.000Z",
+      "end": "1540-12-31T00:00:00.000Z",
+      "period": "1540"
+    }
+  ],
+  "techniques": [
+    "Olie på træ"
+  ],
+  "public_domain": true,
+  "rights": "https://creativecommons.org/publicdomain/mark/1.0/",
+  "image_iiif_id": "https://iip.smk.dk/iiif/jp2/2n49t5316_KMSsp334.tif.jp2",
+  "image_iiif_info": "https://iip.smk.dk/iiif/jp2/2n49t5316_KMSsp334.tif.jp2/info.json",
+  "image_width": 4330,
+  "image_height": 3250,
+  "verified_at": "2026-09-17",
+  "metadata_source": "https://api.smk.dk/api/v1/art/?object_number=KMSsp334",
+  "download_url": "https://iip.smk.dk/iiif/jp2/2n49t5316_KMSsp334.tif.jp2/full/!1800,1800/0/default.jpg",
+  "policy": "https://www.smk.dk/article/vaerker-til-fri-download/"
+}

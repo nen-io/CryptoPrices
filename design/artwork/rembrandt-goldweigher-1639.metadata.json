@@ -1,0 +1,18 @@
+{
+  "verified_at": "2026-09-17",
+  "object_id": "118967",
+  "title": "Jan Uytenbogaert, \"The Goldweigher\"",
+  "artist": "Rembrandt van Rijn",
+  "date": "1639",
+  "source": "https://www.nga.gov/artworks/118967-jan-uytenbogaert-goldweigher",
+  "metadata_source": "https://raw.githubusercontent.com/NationalGalleryOfArt/opendata/main/data/published_images.csv",
+  "uuid": "ea7376ee-3e42-4c52-9100-8192cc908881",
+  "iiifurl": "https://api.nga.gov/iiif/ea7376ee-3e42-4c52-9100-8192cc908881",
+  "openaccess": "1",
+  "depictstmsobjectid": "118967",
+  "original_width": "3569",
+  "original_height": "4372",
+  "download_url": "https://api.nga.gov/iiif/ea7376ee-3e42-4c52-9100-8192cc908881/full/!1800,1800/0/default.jpg",
+  "rights": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "policy": "https://www.nga.gov/terms-and-notices"
+}
