@@ -1,10 +1,18 @@
 # Desktop CI
 
-The root `.gitlab-ci.yml` runs verification and unpacked builds for branch pushes
-and merge requests. Duplicate branch pipelines are suppressed when a merge request
-is open. Artifacts expire after seven days; this pipeline does not publish releases.
+The primary workflow is [GitHub Actions](../.github/workflows/desktop.yml) in
+[nen-io/CryptoPrices](https://github.com/nen-io/CryptoPrices). It runs on pushes and
+pull requests with a macOS/Windows/Linux matrix, Node 24, type checks, all tests,
+artwork validation, the dependency audit and unpacked host-platform builds. macOS
+also runs the native Electron interaction tests with a disposable database.
+Actions are pinned by commit SHA and have read-only repository permissions.
+Review artifacts expire after seven days; this workflow does not publish releases.
 
-## GitLab runners
+The optional root `.gitlab-ci.yml` supports GitLab mirrors. It runs verification
+and unpacked builds for branch pushes and merge requests, suppressing duplicate
+branch pipelines when a merge request is open.
+
+## Optional GitLab runners
 
 - Linux: `saas-linux-small-amd64`, official Node 24.19.0 Debian image.
 - Windows: `saas-windows-medium-amd64`, official Node 24.19.0 archive with a pinned
@@ -15,7 +23,7 @@ is open. Artifacts expire after seven days; this pipeline does not publish relea
   the namespace has access to GitLab-hosted macOS runners.
 
 Every job runs `npm ci`, `npm run check`, the dependency audit, and an unpacked host
-build. Native UI smoke runs locally (and in the retained GitHub macOS job) with a
+build. Native UI smoke runs locally (and in the GitHub macOS job) with a
 disposable database. GitLab-hosted macOS runners do not support UI interaction,
 so their job only checks and packages. Signing identity auto-discovery is disabled;
 macOS bundles use an explicit ad-hoc signature. Windows
@@ -29,7 +37,7 @@ address is needed by CI, and live provider calls are excluded from tests.
 
 macOS hosted runners require an eligible Premium/Ultimate or Open Source plan;
 local macOS checks remain available without that service. The GitHub workflow is
-kept for mirrors and checks all three platforms there. Public macOS distribution
+the primary pipeline and checks all three platforms. Public macOS distribution
 requires a Developer ID signing override and notarization; an ad-hoc signature
 only establishes local bundle integrity, not Apple publisher trust.
 

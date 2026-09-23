@@ -24,7 +24,8 @@ The app has no cloud identity service, telemetry, wallet connection, transaction
 Use **Node.js 24**, version **24.14.0 or later within the 24.x line**, and npm. The lockfile pins the dependency versions; a supported runtime matters because storage uses Node's built-in SQLite API.
 
 ```sh
-# Run from the cloned CryptoPrices repository
+git clone https://github.com/nen-io/CryptoPrices.git
+cd CryptoPrices
 npm ci
 npm run dev
 ```
@@ -42,7 +43,7 @@ Dependency installation requires internet access. Local registration, unlocking 
 | `npm run package:dir` | Produce an unpacked application for the host platform |
 | `npm run package` | Run checks and create the configured host-platform packages |
 
-Build output goes to `out/`; packaging output goes to `release/`. Packaging does not publish a release. macOS uses an ad-hoc signature by default; public distribution needs Developer ID signing and notarization. The [GitLab pipeline](.gitlab-ci.yml) checks and packages Windows/Linux, with an optional macOS job for eligible GitLab plans. A [GitHub Actions workflow](.github/workflows/desktop.yml) is also retained. See [CI setup](docs/ci.md) and actual workflow results before treating a platform as verified.
+Build output goes to `out/`; packaging output goes to `release/`. Packaging does not publish a release. macOS uses an ad-hoc signature by default; public distribution needs Developer ID signing and notarization. The [GitHub Actions workflow](.github/workflows/desktop.yml) checks and packages macOS, Windows and Linux, including native Electron interaction tests on macOS. The optional [GitLab pipeline](.gitlab-ci.yml) remains available for mirrors. See [CI setup](docs/ci.md) and actual workflow results before treating a platform as verified.
 
 ## Wallet coverage
 

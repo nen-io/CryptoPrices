@@ -8,7 +8,8 @@ runtime and package evidence from remote CI and public distribution.
 A fresh local clone of implementation commit
 `af1e8bb9a7118cd5b4ddeef0d8af08cbab009ea8` passed `npm ci`, `npm run check`
 and the complete Electron UI smoke. It required no untracked files or copied
-node_modules. This verification note is the only subsequent change.
+node_modules. Subsequent publication edits update CI artifact handling and
+documentation without changing application behavior.
 
 - `npm run check`: artwork validation, Vue/TypeScript checks, 96 tests in eight
   files, and the production build pass.
@@ -78,10 +79,10 @@ Gallery tests cover scheduler cleanup, reduced motion, visibility and interactio
 
 ## Publication and distribution boundaries
 
-GitLab Windows/Linux verification and unpacked builds are configured; macOS is
-optional for eligible hosted-runner plans. Those hosted Mac runners cannot run the
-native UI smoke, which remains local and in the retained GitHub workflow. YAML
-syntax was checked locally. No remote pipeline success is claimed before a push
+GitHub Actions checks and packages macOS, Windows and Linux, with native Electron
+UI smoke on macOS. The optional GitLab configuration remains available for mirrors;
+its hosted Mac runners cannot run native UI interaction tests. YAML syntax was
+checked locally. No remote pipeline success is claimed before a push
 and an actual completed run. Windows/Linux installation and native interaction
 still require their platforms.
 
@@ -90,5 +91,5 @@ work. The ad-hoc local app runs and passes bundle-integrity checks, but its sign
 does not establish a verified publisher for downloaded installations.
 
 The disposable studies are preserved separately on `design/collector-study`.
-The GitLab destination and authenticated publishing access must be supplied before
-this checkout can be pushed there; the original GitHub remote is retained.
+The publishing destination is the original
+[nen-io/CryptoPrices repository](https://github.com/nen-io/CryptoPrices).
