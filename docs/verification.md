@@ -5,6 +5,11 @@ runtime and package evidence from remote CI and public distribution.
 
 ## Executed locally
 
+A fresh local clone of implementation commit
+`af1e8bb9a7118cd5b4ddeef0d8af08cbab009ea8` passed `npm ci`, `npm run check`
+and the complete Electron UI smoke. It required no untracked files or copied
+node_modules. This verification note is the only subsequent change.
+
 - `npm run check`: artwork validation, Vue/TypeScript checks, 96 tests in eight
   files, and the production build pass.
 - `npm run test:e2e`: the real Electron 44.4.5 runtime passes user-facing offline
@@ -50,6 +55,9 @@ artwork, and 472 ms on restart. A three-second idle sample measured about 0.55%
 summed process CPU and 434.7 MiB summed working set. Shared pages are counted more
 than once and Playwright is attached. These are diagnostics, not representative
 cold-cache or packaged benchmarks, and no universal low-memory/FPS claim follows.
+The clean-clone smoke separately took 5.50 seconds on its first tool launch,
+including Electron binary bootstrap, and 530 ms on restart. Its idle sample was
+0.22% summed CPU and 426.6 MiB working set under the same measurement caveats.
 
 The renderer is approximately 385 kB JavaScript and 50 kB CSS before compression.
 The 60 offline images total 10.76 MB; normal playback loads only current/next images.
